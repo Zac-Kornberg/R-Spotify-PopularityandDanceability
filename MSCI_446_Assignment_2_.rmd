@@ -1,0 +1,305 @@
+---
+title: 'Lab Report 2'
+author: "Andrew Cheung, Darren Jiang, Zachary Kornberg"
+geometry: margin=.75in
+output:
+  pdf_document: default
+  word_document: default
+  html_document:
+    df_print: paged
+    theme: cosmo
+header-includes:
+- \usepackage{graphicx}
+- \usepackage{color}
+graphics: yes
+fontsize: 11pt
+---
+
+<!-- You can check templates from this website and change html theme: https://www.datadreaming.org/post/r-markdown-theme-gallery/ -->
+<!-- It won't affect the PDF or Word. -->
+
+
+## Question 1: Nonlinear Regression
+
+
+### 1.1. Process your data
+```{r}
+library('tidyverse')
+library('gridExtra')
+library('caret')
+library('glmnet')
+library('ISLR')
+```
+
+```{r}
+set.seed(1)
+spotify <- read_csv("spotify_songs.csv")
+spotify <- select(spotify, c('track_popularity', 'playlist_genre', 'danceability', 'energy', 'key', 'loudness', 'mode', 'speechiness', 'acousticness', 'instrumentalness' , 'liveness', 'tempo', 'valence', 'duration_ms'))
+spotify <- na.omit(spotify)
+spotify <- spotify[spotify$track_popularity != 0, ]
+spotify <- spotify[sample(5000), ]
+str(spotify)
+```
+
+
+### 1.2. Train/Test Split
+```{r}
+train_size <- floor(0.8 * nrow(spotify))
+train_inds <- sample(1:nrow(spotify), size = train_size)
+test_inds  <- setdiff(1:nrow(spotify), train_inds)
+
+train <- spotify[ train_inds , ] 
+test  <- spotify[ test_inds , ]
+
+train.row <- nrow(train)
+test.row <- nrow(test)
+
+train.row
+test.row
+
+cat('train size:', nrow(train), '\ntest size:', nrow(test))
+
+```
+
+### 1.3. Visualize the data
+
+```{r}
+g1 <-ggplot(spotify, aes(x=danceability)) + 
+  geom_histogram(colour='white') 
+g2 <- ggplot(spotify, aes(x=track_popularity)) + 
+  geom_histogram(colour='white') 
+grid.arrange(g1,g2)
+
+g3 <- ggplot(spotify) + 
+  geom_point(aes(y=track_popularity, x = danceability), colour='red') 
+
+grid.arrange(g1,g2,g3, ncol=2)
+```
+No relationship seems to exist between danceability vs track_popularity. There are 2 outlier songs with extremely low danceability score.
+
+
+### 1.4. Fit 4 Models
+
+```{r}
+# Simple Linear Regression
+spotify.lm <- lm(track_popularity ~ danceability, data = train)
+spotify.lm.pred <- predict(spotify.lm, test)
+
+
+# Multiple Linear Regression
+spotify.mlm <- lm(track_popularity ~ danceability + energy + key + loudness + mode + speechiness + acousticness + instrumentalness + liveness+ tempo + valence + duration_ms, data = train)
+spotify.mlm.pred <- predict(spotify.mlm, test)
+
+
+# Polynomial Regression
+spotify.poly <- lm(track_popularity ~ poly(danceability, 6), data = train)
+spotify.poly.pred <- predict(spotify.poly, test)
+
+#Local weighted regression
+spotify.lwr <- loess(track_popularity ~ danceability, data=train, span=0.1)
+spotify.lwr.pred <- predict(spotify.lwr, test)
+
+ggplot() +
+  geom_point(aes(x=test$danceability, y = test$track_popularity), colour='grey') +
+  geom_point(aes(x=test$danceability, y = spotify.lm.pred), colour='red') +
+  geom_point(aes(x=test$danceability, y = spotify.mlm.pred), colour='blue') +
+  geom_point(aes(x=test$danceability, y = spotify.poly.pred), colour='green') +
+  geom_point(aes(x=test$danceability, y = spotify.lwr.pred), colour='yellow') 
+
+
+rmse1 <- RMSE(spotify.lm.pred, train$track_popularity)
+rmse2 <- RMSE(spotify.mlm.pred, train$track_popularity)
+rmse3 <- RMSE(spotify.poly.pred, train$track_popularity)
+rmse4 <- RMSE(spotify.lwr.pred, train$track_popularity)
+rmses <- c(rmse1,rmse2,rmse3,rmse4)
+rmses
+#Simple linear regression > Polynomial > Local weighted regression > Multiple linear regression
+#based on training data set
+
+
+rmse5 <- RMSE(spotify.lm.pred, test$track_popularity)
+rmse6 <- RMSE(spotify.mlm.pred, test$track_popularity)
+rmse7 <- RMSE(spotify.poly.pred, test$track_popularity)
+rmse8 <- RMSE(spotify.lwr.pred, test$track_popularity)
+rmses2 <- c(rmse5,rmse6,rmse7,rmse8)
+rmses2
+#Multiple linear regression > Polynomial > Simple linear > Local weighted
+#based on test data set 
+```
+
+Ranking of different regression errors changed drastically between test and train data sets. 
+Only Polynomial regression remained in its ranking spot at #2 both times leading to my assumption that it would be the best choice for analysis at this point in time.
+
+
+### 1.5. Cross-Validation
+```{r}
+
+val_inds <- sample(1:nrow(train), size = floor(2/8 *nrow(train)))
+val      <- train[val_inds,]
+train    <- train[-val_inds,]
+train.control <- trainControl(method ="cv", number = 10)
+
+
+#Simple Linear Regression:
+spotify.lm.cv.train <- train(track_popularity ~ danceability, data = spotify, 
+                  method ="lm", trControl = train.control)
+spotify.lm.cv.pred <- predict(spotify.lm.cv.train)
+
+rmse9 <- RMSE(spotify.lm.cv.pred, spotify$track_popularity)
+
+
+# Multiple Linear Regression:
+spotify.mlm.cv.train <- train(track_popularity ~ danceability + energy + key + loudness + mode + speechiness + acousticness + instrumentalness + liveness+ tempo + valence + duration_ms, data = spotify, 
+                             method ="lm", trControl = train.control)
+spotify.mlm.cv.pred <- predict(spotify.mlm.cv.train)
+
+rmse10 <- RMSE(spotify.mlm.cv.pred, spotify$track_popularity)
+
+
+# Polynomial Regression
+spotify.poly.cv.train <- train(track_popularity ~ poly(danceability, 6), data = spotify, 
+                              method ="lm", trControl = train.control)
+spotify.poly.cv.pred <- predict(spotify.poly.cv.train, spotify)
+
+rmse11 <- RMSE(spotify.poly.cv.pred, spotify$track_popularity)
+
+
+#Local weighted regression
+spotify.lwr.cv.train <- train(track_popularity ~ danceability, data = spotify, 
+                             method ="gamLoess", trControl = train.control)
+spotify.lwr.cv.pred <- predict(spotify.lwr.cv.train)
+
+rmse12 <- RMSE(spotify.lwr.cv.pred, spotify$track_popularity)
+rmses3 <- c(rmse9,rmse10,rmse11,rmse12)
+rmses3
+```
+
+Multiple linear regression > Polynomial > Local weighted > Simple linear 
+Order is similar to the results from the test data set with just simple regression performing much worse in comparison.
+
+\pagebreak
+
+## Question 2: Text Classification
+
+### 2.1. Train/Test Split
+
+```{r}
+set.seed(156)
+train_inds <- sample(1:nrow(health), size = floor(0.8*nrow(health)))
+train <- health[train_inds,]
+test <- health[-train_inds,]
+```
+
+### 2.2. Fit Models
+
+```{r}
+x <- model.matrix(IsMentalHealthRelated ~ .,train)
+y <- train$IsMentalHealthRelated
+
+x.test <- model.matrix(IsMentalHealthRelated ~ ., test)
+
+# logistic regression without regularization
+fit.logreg <- glm(IsMentalHealthRelated ~ ., data = train, family = binomial())
+
+# L1 (lambda followed by logistic regression with regularization)
+cv.fit1 <- cv.glmnet(x,y,alpha=1, family='binomial', nfolds = 10)
+lam1 <- cv.fit1$lambda.min
+fit.l1 <- glmnet(x,y,alpha=1, family='binomial', lambda=lam1)
+
+# L2
+cv.fit2 <- cv.glmnet(x,y,alpha=0, family='binomial', nfolds = 10)
+lam2 <- cv.fit2$lambda.min
+fit.l2 <- glmnet(x,y,alpha=0, family='binomial', lambda=lam2)
+```
+The logistic regression model without regularization had the lowest accuracy while the L2 regularization had the highest accuracy.
+
+### 2.3. Compare performances
+
+```{r}
+probs <- predict(fit.logreg, test, type="response")
+preds <- ifelse(probs >= 0.5, 1, 0)
+target <- test$IsMentalHealthRelated
+acc <- mean(preds==target)
+acc
+# accuracy of 0.8400633
+
+probs1 <- predict(fit.l1, x.test, type="response")
+preds1 <- ifelse(probs1 >= 0.5, 1, 0)
+target1 <- test$IsMentalHealthRelated
+acc1 <- mean(preds1==target1)
+acc1
+# accuracy of 0.8566904
+
+probs2 <- predict(fit.l2, x.test, type="response")
+preds2 <- ifelse(probs2 >= 0.5, 1, 0)
+target2 <- test$IsMentalHealthRelated
+acc2 <- mean(preds2==target2)
+acc2
+```
+
+The logistic regression model without regularization had the lowest accuracy while the L2 regularization had the highest accuracy.
+
+### 2.4. Interpret the models
+
+```{r}
+ce1 <- coef(fit.l1)[,1]
+ce2 <- coef(fit.l2)[,1]
+
+result1 <- sort(ce1)
+result1
+
+result2 <- sort(ce2)
+result2
+```
+
+In both the L1 and L2 regularization, the word with the largest coefficient is term and the word with the smallest coefficient is fitness. The L1 regularization forces some coefficients to zero while the L2 shrink the coefficients.
+\pagebreak
+
+## Question 3. Subset Selection
+
+```{r}
+library("leaps")
+library("AmesHousing")
+library("ggplot2")
+library("dplyr")
+ames        <- AmesHousing::make_ames()
+numericVars <- ames %>% summarise_all(is.numeric) %>% unlist()
+ames        <- ames[, numericVars]
+
+regSubF <- regsubsets(Sale_Price ~ .,data=ames, method = "forward")
+summaryF <- summary(regSubF)
+plot(summaryF$rss,xlab = " Forwards model",ylab = "RSS")
+minPredictor <- which.min(summaryF$rss)
+
+coef(regSubF,minPredictor)
+
+#The best model for forward selection had 9 predictors and the coefficients were: 3.375617e+02   7.227673e+02   6.298899e+01 1.527980e+01   5.307364e+01   7.217249e+03 4.913389e+04   1.606418e+04   7.698997e+01
+
+#Forward BIC
+plot(summaryF$bic,xlab = "Forwards model ",ylab = "BIC")
+minPredictor <- which.min(summaryF$bic)
+
+coef(regSubF,minPredictor)
+
+#The best model for forward selection had 9 predictors for minimum BIC
+
+#Backward RSS
+regSubB <- regsubsets(Sale_Price ~ .,data=ames, method = "backward")
+summaryB <- summary(regSubB)
+plot(summaryB$rss,xlab = "Backwards model ",ylab = "RSS")
+minPredictor <- which.min(summaryB$rss)
+
+coef(regSubB,minPredictor)
+
+#From the minimum sum of squares calculations, the best model for backward selection had 9 predictors and their coefficients are: 3.929390e+02   6.503242e+02   4.722067e+01  1.786087e+01   4.482786e+01   7.151581e+01  6.764881e+01  -1.427813e+03   5.656900e+01
+
+# Backward BIC
+plot(summaryB$bic,xlab = "Backwards model",ylab = "BIC")
+minPredictor <- which.min(summaryB$bic)
+
+coef(regSubB,minPredictor)
+
+#The best model for backward selection regarding minimum BIC had 9 predictors.
+```
+
+
